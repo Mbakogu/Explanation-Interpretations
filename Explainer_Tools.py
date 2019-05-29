@@ -158,9 +158,8 @@ class LimeExplainer():
         data = np.array(data)
         explanations = []
         
-        print("here", len(data))
         for item in range(len(data)):
-            explanations.append(gener.explain_with_lime(data[item]))
+            explanations.append(self.explain(data[item]))
             
         for item in range(len(explanations)):
             for ele in range(len(explanations[item])):
@@ -241,6 +240,15 @@ def standardize_data(data, save = None):
         np.save(save, data) 
 
     return data
+
+def create_heatmap(matrix, xlabel = "x-axis", ylabel = "y-axis", title = "HeatMap", save = False):
+    plt.xlabel(xlabel)
+    plt.ylabel(ylabel)
+    
+    plt.imshow(matrix)
+    
+    if save:
+        plt.savefig(title)
 
 
 
