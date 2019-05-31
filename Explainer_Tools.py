@@ -9,6 +9,7 @@ import lime.lime_tabular
 from collections import defaultdict
 import pandas as pd
 from scipy import stats
+import json
 
 class Trainer():
     
@@ -179,42 +180,8 @@ class LimeExplainer():
         return self.labels
 
 
-def calc_discrepancy(df, ecid, f, continuous = False, max_bins = 30):
-    discrepancy = 0
-    spec = df[df["ecid"] == ecid][f]
-    feat = df[f]
-    
-    spec_dist = defaultdict(int)
-    
-    feat_dist = defaultdict(int)
-    
-    for item in spec:
-        spec_dist[item] += 1
-
-    for item in feat:
-        feat_dist[item] += 1
-        
-    if set(spec_dist) != set(feat_dist):
-        raise Exception("One of the arrays: {} or {} is missing 1 or more categories\n {}\n{}".format(ecid, f, set(spec_dist), set(feat_dist)))
-
-    for item in spec_dist:
-        spec_dist[item] = float(spec_dist[item])/len(spec)
-
-    for item in feat_dist:
-        feat_dist[item] = float(feat_dist[item])/len(feat)
-    
-    
-    dif_arr = [abs(feat_dist[item] - spec_dist[item]) for item in feat_dist]
-    
-    for item in dif_arr:
-        discrepancy += item/float(len(dif_arr)) 
-        
-    return discrepancy
-
-
 def k_cluster(data, k = 2, func = None, save = None):
     data = np.array(data)
-    print("Kmeans for {} clusters".format(k))
     clusters = None
     if func is None:
         clusters = KMeans(n_clusters=k, random_state=0).fit_predict(data)
@@ -225,6 +192,130 @@ def k_cluster(data, k = 2, func = None, save = None):
         np.save(save, clusters)
 
     return clusters
+
+def feature_discrepancy(df, cluster_info, f, num_bins = None, weight_bins = False):
+    """Finds discrepancy of a feature between all data and a specific cluster by summing the 
+    percentages of difference across all values in the feature
+    
+    df = dataframe
+    
+    cluster_info = tuple of cluster column name and value to cluster
+    
+    num_bins = force the data to a certain number of bins (recommended for continuous data)
+    
+    weight_bins = weight the discrepancy of each value proportionally to the number of possible values 
+           so the discrepancy in each value will be worth less if the number of possible values is larger (e.g.,
+           discrepancy in a cluster with 5 possible values worth more cluster with 100 possible values)"""
+    #find optimal binning later
+    
+    feat = pd.DataFrame(df[f])[f]
+    cluster = pd.DataFrame(df[df[cluster_info[0]] == cluster_info[1]][f])[f]
+    
+    feature_map = {}
+    if num_bins != None:
+        num_bins = min(len(set(df[f])), num_bins)
+        bins = k_cluster([[x] for x in feat], k=num_bins)
+        for item in range(len(feat)):
+            feature_map[feat[item]] = bins[item]
+    else:
+        for item in range(len(feat)):
+            feature_map[feat[item]] = feat[item]
+       
+    discrepancy = 0
+    
+    cluster_dist, feat_dist = defaultdict(int), defaultdict(int)
+    for item in feature_map:
+        feat_dist[feature_map[item]] = 0
+        cluster_dist[feature_map[item]] = 0
+        
+    for item in feat:
+        feat_dist[feature_map[item]] += 1
+
+    for item in cluster:
+        cluster_dist[feature_map[item]] += 1
+        
+    for item in feat_dist:
+        feat_dist[item] = float(feat_dist[item])/len(feat)
+
+    for item in cluster_dist:
+        cluster_dist[item] = float(cluster_dist[item])/len(cluster)
+    
+    
+    dif_arr = [abs(feat_dist[item] - cluster_dist[item]) for item in feat_dist]
+    
+    weighted_bins = float(1)
+    if weight_bins:
+        weighted_bins = float(len(dif_arr)) 
+        
+    for item in dif_arr:
+        discrepancy += item/weighted_bins
+        
+    return discrepancy
+
+def order_feature_discrepancy(df, cluster_info, feature_info, max_bins = 30, weight_bins = False):
+    
+    discrepancy_dict = defaultdict(list)
+    for clust in cluster_info[1:]:
+        for f in feature_info:
+            discrepancy_dict[clust].append((f, feature_discrepancy(df, (cluster_info[0], clust), 
+                                                              f, weight_bins = weight_bins, num_bins = min(len(set(df[f])), max_bins))))
+            
+            discrepancy_dict[clust] = sorted(discrepancy_dict[clust], key = lambda x: x[1])
+                                          
+    return discrepancy_dict
+
+def display_feature_discrepancy(all_ordered):
+
+    for item in all_ordered:
+        ordered = []
+        for feature in range(len(all_ordered[item])):
+            ordered.append(all_ordered[item][feature][0])
+        print("Ecid: {}, ordered: {}".format(item, ordered))
+        print()
+
+
+def prediction_discrepancy(df, cluster_info, f):
+    feat = pd.DataFrame(df[f])[f]
+    cluster = pd.DataFrame(df[df[cluster_info[0]] == cluster_info[1]][f])[f]
+    
+    feat_avg = float(np.mean(feat))
+    cluster_avg = float(np.mean(cluster))
+    
+    return abs(feat_avg - cluster_avg)
+
+def order_prediction_discrepancy(df, cluster_info, f):
+    
+    discrepancy_dict = defaultdict(int)
+    
+    for clust in cluster_info[1:]:
+        discrepancy_dict[clust] = prediction_discrepancy(df, (cluster_info[0], clust), f)                     
+    return discrepancy_dict
+
+def display_pred_accur_discrepancy(all_ordered):
+    for item in all_ordered:
+        print("Ecid: {}, difference: {}".format(item, all_ordered[item]))
+
+
+def accuracy_discrepancy(df, cluster_info, p, l):
+    feat_p = pd.DataFrame(df[p])[p]
+    feat_l = pd.DataFrame(df[l])[l]
+    
+    cluster_p = pd.DataFrame(df[df[cluster_info[0]] == cluster_info[1]][p])[p]
+    cluster_l = pd.DataFrame(df[df[cluster_info[0]] == cluster_info[1]][l])[l]
+    
+    feat_avg = float(np.mean([0 if feat_p[x] != feat_l[x] else 1 for x in range(len(feat_p))]))
+    cluster_avg = float(np.mean([0 if feat_p[x] != feat_l[x] else 1 for x in range(len(cluster_p))]))
+    
+    return abs(feat_avg - cluster_avg)
+
+
+def order_accuracy_discrepancy(df, cluster_info, p, l):
+    
+    discrepancy_dict = defaultdict(int)
+    
+    for clust in cluster_info[1:]:
+        discrepancy_dict[clust] = accuracy_discrepancy(df, (cluster_info[0], clust), p, l)                     
+    return discrepancy_dict
 
 
 def standardize(column):
@@ -242,13 +333,38 @@ def standardize_data(data, save = None):
     return data
 
 def create_heatmap(matrix, xlabel = "x-axis", ylabel = "y-axis", title = "HeatMap", save = False):
+    "given a 2D array, return a heat map (outer is x-axis, inner is y-axis)"
     plt.xlabel(xlabel)
     plt.ylabel(ylabel)
     
     plt.imshow(matrix)
+    plt.colorbar()
     
     if save:
         plt.savefig(title)
+
+def plot_distribution(cluster, cluster_size, save = False, plt_info = []):
+    
+    plt.hist(cluster, bins = np.arange(cluster_size+1)-0.5)
+    
+    if plt_info:
+        plt.xlabel(plt_info[0], fontsize = 12)
+        plt.ylabel(plt_info[1], fontsize = 12)
+        plt.title(plt_info[2])
+    
+    
+    if save:
+        plt.savefig(plt_info[3])
+        
+    plt.show()
+
+def save_json(data, name):
+    "Save dictionaries and defaultdicts"
+    json.dump(data, open('{}.json'.format(name), 'w'))
+    
+def load_json(name):
+    "loads dictionaries and defeaultdicts"
+    return json.load(open(name, 'r'))
 
 
 
