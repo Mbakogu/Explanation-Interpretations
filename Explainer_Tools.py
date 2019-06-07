@@ -71,6 +71,7 @@ class Trainer():
             return True
         
     def fix_data(self, data):
+        data = np.array(data)
         le = sklearn.preprocessing.LabelEncoder()
         le.fit(data)
         return le.transform(data), le.classes_
@@ -180,18 +181,27 @@ class LimeExplainer():
         return self.labels
 
 
-def k_cluster(data, k = 2, func = None, save = None):
+def k_cluster(data, k = 2, func = None, save = None, n_init = 10):
+    """If using own clustering function, function must have a 
+    cluster_centers_ and labels_ attributes"""
     data = np.array(data)
-    clusters = None
+    clustering = None
+    centers = None
+    clustered_points = None
+    
     if func is None:
-        clusters = KMeans(n_clusters=k, random_state=0).fit_predict(data)
+        clustering = KMeans(n_clusters=k, random_state=0, n_init = n_init).fit(data)
     else:
-        clusters = func(data)
+        clustering = func(data)
+        
+    centers = clustering.cluster_centers_
+    clusters = clustering.labels_
 
     if save != None:
-        np.save(save, clusters)
-
-    return clusters
+        np.save(save + "centers", centers)
+        np.save(save + "clusters", clusters)
+        
+    return {"centers": centers, "clusters": clusters}
 
 def feature_discrepancy(df, cluster_info, f, num_bins = None, weight_bins = False):
     """Finds discrepancy of a feature between all data and a specific cluster by summing the 
@@ -281,7 +291,7 @@ def prediction_discrepancy(df, cluster_info, f):
     feat_avg = float(np.mean(feat))
     cluster_avg = float(np.mean(cluster))
     
-    return abs(feat_avg - cluster_avg)
+    return {"cluster": cluster_avg, "feat": feat_avg, "discrepancy": abs(feat_avg - cluster_avg)}
 
 def order_prediction_discrepancy(df, cluster_info, f):
     
@@ -297,16 +307,16 @@ def display_pred_accur_discrepancy(all_ordered):
 
 
 def accuracy_discrepancy(df, cluster_info, p, l):
-    feat_p = pd.DataFrame(df[p])[p]
-    feat_l = pd.DataFrame(df[l])[l]
+    feat_p = list(pd.DataFrame(df[p])[p])
+    feat_l = list(pd.DataFrame(df[l])[l])
     
-    cluster_p = pd.DataFrame(df[df[cluster_info[0]] == cluster_info[1]][p])[p]
-    cluster_l = pd.DataFrame(df[df[cluster_info[0]] == cluster_info[1]][l])[l]
+    cluster_p = list(pd.DataFrame(df[df[cluster_info[0]] == cluster_info[1]][p])[p])
+    cluster_l = list(pd.DataFrame(df[df[cluster_info[0]] == cluster_info[1]][l])[l])
     
     feat_avg = float(np.mean([0 if feat_p[x] != feat_l[x] else 1 for x in range(len(feat_p))]))
-    cluster_avg = float(np.mean([0 if feat_p[x] != feat_l[x] else 1 for x in range(len(cluster_p))]))
+    cluster_avg = float(np.mean([0 if cluster_p[x] != cluster_l[x] else 1 for x in range(len(cluster_p))]))
     
-    return abs(feat_avg - cluster_avg)
+    return {"cluster": cluster_avg, "whole": feat_avg, "discrepancy": abs(feat_avg - cluster_avg)}
 
 
 def order_accuracy_discrepancy(df, cluster_info, p, l):
@@ -332,12 +342,22 @@ def standardize_data(data, save = None):
 
     return data
 
+def matrix_from_dataframe(df, row, col):
+    matrix = np.array([[0 for x in range(len(set(df[col])))] for x in range(len(set(df[row])))])
+    for index, item in df.iterrows():
+        x = int(item[row])
+        y = int(item[col])
+        matrix[x][y] += 1
+        
+    return matrix
+
+    
 def create_heatmap(matrix, xlabel = "x-axis", ylabel = "y-axis", title = "HeatMap", save = False):
     "given a 2D array, return a heat map (outer is x-axis, inner is y-axis)"
-    plt.xlabel(xlabel)
-    plt.ylabel(ylabel)
+    plt.xlabel(xlabel, fontsize = 12)
+    plt.ylabel(ylabel, fontsize = 12)
     
-    plt.imshow(matrix)
+    plt.imshow(matrix.T, origin = "lower")
     plt.colorbar()
     
     if save:
@@ -360,7 +380,7 @@ def plot_distribution(cluster, cluster_size, save = False, plt_info = []):
 
 def save_json(data, name):
     "Save dictionaries and defaultdicts"
-    json.dump(data, open('{}.json'.format(name), 'w'))
+    json.dump(data, open('{}.json'.format(name), 'w'), indent = 2)
     
 def load_json(name):
     "loads dictionaries and defeaultdicts"
