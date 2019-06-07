@@ -222,11 +222,10 @@ def feature_discrepancy(df, cluster_info, f, num_bins = None, weight_bins = Fals
     cluster = pd.DataFrame(df[df[cluster_info[0]] == cluster_info[1]][f])[f]
     
     feature_map = {}
-    if num_bins != None:
-        num_bins = min(len(set(df[f])), num_bins)
-        bins = k_cluster([[x] for x in feat], k=num_bins)
+    if num_bins != None and len(set(df[f])) > num_bins:                       
+        clustering = k_cluster([[x] for x in feat], k=num_bins)
         for item in range(len(feat)):
-            feature_map[feat[item]] = bins[item]
+            feature_map[feat[item]] = np.float64(clustering["centers"][clustering["clusters"][item]])
     else:
         for item in range(len(feat)):
             feature_map[feat[item]] = feat[item]
@@ -237,30 +236,36 @@ def feature_discrepancy(df, cluster_info, f, num_bins = None, weight_bins = Fals
     for item in feature_map:
         feat_dist[feature_map[item]] = 0
         cluster_dist[feature_map[item]] = 0
-        
+     
     for item in feat:
         feat_dist[feature_map[item]] += 1
-
+    
     for item in cluster:
         cluster_dist[feature_map[item]] += 1
-        
+    cluster_count = dict(cluster_dist)
+    
     for item in feat_dist:
         feat_dist[item] = float(feat_dist[item])/len(feat)
 
     for item in cluster_dist:
         cluster_dist[item] = float(cluster_dist[item])/len(cluster)
     
+    diff_arr = [(item, abs(feat_dist[item] - cluster_dist[item])) for item in feat_dist]
     
-    dif_arr = [abs(feat_dist[item] - cluster_dist[item]) for item in feat_dist]
+    
+
+    top_arr = [item[0] for item in sorted(diff_arr, key = lambda x: x[1])][:5]
+    
+    top_dict = {item:cluster_count[item] for item in top_arr}
     
     weighted_bins = float(1)
     if weight_bins:
-        weighted_bins = float(len(dif_arr)) 
+        weighted_bins = float(len(diff_arr)) 
         
-    for item in dif_arr:
-        discrepancy += item/weighted_bins
+    for item in diff_arr:
+        discrepancy += item[1]/weighted_bins
         
-    return discrepancy
+    return discrepancy, top_dict
 
 def order_feature_discrepancy(df, cluster_info, feature_info, max_bins = 30, weight_bins = False):
     
